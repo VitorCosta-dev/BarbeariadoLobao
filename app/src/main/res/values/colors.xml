@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="lobao_black">#0B0B0B</color>
+    <color name="lobao_panel">#151513</color>
+    <color name="lobao_gold">#D2AD4F</color>
+    <color name="lobao_gold_light">#F0D58A</color>
+    <color name="lobao_text">#F4F0E6</color>
+</resources>
