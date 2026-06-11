@@ -14,6 +14,12 @@ import android.widget.ScrollView;
 import android.widget.Space;
 import android.widget.TextView;
 
+import com.google.firebase.firestore.FieldValue;
+import com.google.firebase.firestore.FirebaseFirestore;
+
+import java.util.HashMap;
+import java.util.Map;
+
 public class MainActivity extends Activity {
     private static final int BLACK = Color.rgb(11, 11, 11);
     private static final int PANEL = Color.rgb(21, 21, 19);
@@ -25,10 +31,15 @@ public class MainActivity extends Activity {
     private String selectedService = "Corte masculino";
     private String selectedPrice = "R$ 35";
     private String selectedTime = "13:00";
+    private FirebaseFirestore db;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // Inicializa o banco de dados Firebase Firestore
+        db = FirebaseFirestore.getInstance();
+
         showLogin();
     }
 
@@ -49,15 +60,35 @@ public class MainActivity extends Activity {
     private void showSignup() {
         LinearLayout content = base();
         addTop(content, "Cadastro", this::showLogin);
+
         addPanel(content, panel -> {
-            addInput(panel, "Barbearia", "Barbearia do Lobão", false);
-            addInput(panel, "Nome completo", "", false);
-            addInput(panel, "Telefone", "", false);
-            addInput(panel, "E-mail", "", false);
-            addInput(panel, "Senha", "", true);
-            addInput(panel, "Confirmar senha", "", true);
-            panel.addView(primaryButton("Criar conta", v -> showHome()));
+            EditText barbeariaInput = addInput(panel, "Barbearia", "Barbearia do Lobão", false);
+            EditText nomeInput = addInput(panel, "Nome completo", "", false);
+            EditText telefoneInput = addInput(panel, "Telefone", "", false);
+            EditText emailInput = addInput(panel, "E-mail", "", false);
+            EditText senhaInput = addInput(panel, "Senha", "", true);
+            EditText confirmarSenhaInput = addInput(panel, "Confirmar senha", "", true);
+
+            panel.addView(primaryButton("Criar conta", v -> {
+                Map<String, Object> usuario = new HashMap<>();
+
+                // Integração 100% alinhada com a coleção 'usuarios' do seu banco
+                usuario.put("nome", nomeInput.getText().toString());
+                usuario.put("email", emailInput.getText().toString());
+                usuario.put("tipo", "cliente");
+                usuario.put("criadoEm", FieldValue.serverTimestamp());
+
+                db.collection("usuarios")
+                        .add(usuario)
+                        .addOnSuccessListener(documentReference -> {
+                            System.out.println("Usuário salvo com ID: " + documentReference.getId());
+                            showHome();
+                        })
+                        .addOnFailureListener(e ->
+                                System.out.println("Erro ao salvar usuário: " + e.getMessage()));
+            }));
         });
+
         setContentView(scroll(content));
     }
 
@@ -90,17 +121,20 @@ public class MainActivity extends Activity {
             addChoice(panel, "Barba desenhada", "R$ 25");
             addChoice(panel, "Corte + barba", "R$ 55");
             addChoice(panel, "Sobrancelha", "R$ 15");
+
             addSectionTitle(panel, "Horário");
             LinearLayout times = row();
             times.addView(timeButton("09:00"), weightParams());
             times.addView(timeButton("10:30"), weightParams());
             times.addView(timeButton("13:00"), weightParams());
             panel.addView(times);
+
             LinearLayout times2 = row();
             times2.addView(timeButton("14:30"), weightParams());
             times2.addView(timeButton("16:00"), weightParams());
             times2.addView(timeButton("18:30"), weightParams());
             panel.addView(times2);
+
             panel.addView(primaryButton("Continuar", v -> showPayment()));
         });
         setContentView(scroll(content));
@@ -109,17 +143,24 @@ public class MainActivity extends Activity {
     private void showPayment() {
         LinearLayout content = base();
         addTop(content, "Pagamento", this::showSchedule);
+
         addPanel(content, panel -> {
             addSummary(panel, "Barbearia", "Barbearia do Lobão");
             addSummary(panel, "Serviço", selectedService);
             addSummary(panel, "Horário", selectedTime);
             addSummary(panel, "Total", selectedPrice);
         });
+
         addPanel(content, panel -> {
             addSectionTitle(panel, "Forma de pagamento");
             addSmall(panel, "Pix selecionado", GOLD_LIGHT);
-            panel.addView(primaryButton("Confirmar agendamento", v -> showConfirmed()));
+
+            panel.addView(primaryButton("Confirmar agendamento", v -> {
+                salvarAgendamento();
+                showConfirmed();
+            }));
         });
+
         setContentView(scroll(content));
     }
 
@@ -155,6 +196,25 @@ public class MainActivity extends Activity {
         });
         setContentView(scroll(content));
     }
+
+    private void salvarAgendamento() {
+        Map<String, Object> agendamento = new HashMap<>();
+
+        // Integração 100% alinhada com a coleção 'agendamentos' do seu banco
+        agendamento.put("servico", selectedService);
+        agendamento.put("preco", selectedPrice);
+        agendamento.put("horario", selectedTime);
+        agendamento.put("status", "confirmado");
+
+        db.collection("agendamentos")
+                .add(agendamento)
+                .addOnSuccessListener(documentReference ->
+                        System.out.println("Agendamento salvo com ID: " + documentReference.getId()))
+                .addOnFailureListener(e ->
+                        System.out.println("Erro ao salvar agendamento: " + e.getMessage()));
+    }
+
+    // --- MÉTODOS DE CONSTRUÇÃO DA INTERFACE ---
 
     private LinearLayout base() {
         LinearLayout layout = new LinearLayout(this);
@@ -209,9 +269,10 @@ public class MainActivity extends Activity {
         parent.addView(panel, params);
     }
 
-    private void addInput(LinearLayout parent, String label, String value, boolean password) {
+    private EditText addInput(LinearLayout parent, String label, String value, boolean password) {
         TextView tv = text(label.toUpperCase(), 12, MUTED, Typeface.BOLD);
         parent.addView(tv, fullParams());
+
         EditText input = new EditText(this);
         input.setText(value);
         input.setTextColor(TEXT);
@@ -220,12 +281,19 @@ public class MainActivity extends Activity {
         input.setSingleLine(true);
         input.setPadding(dp(12), 0, dp(12), 0);
         input.setBackgroundResource(R.drawable.input);
+
         if (password) {
-            input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+            input.setInputType(
+                    InputType.TYPE_CLASS_TEXT |
+                            InputType.TYPE_TEXT_VARIATION_PASSWORD
+            );
         }
+
         LinearLayout.LayoutParams params = fullParams();
         params.setMargins(0, dp(7), 0, dp(16));
         parent.addView(input, params);
+
+        return input;
     }
 
     private void addChoice(LinearLayout parent, String name, String price) {

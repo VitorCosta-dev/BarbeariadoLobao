@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "879098073200",
+    "project_id": "barbershoop-faaef",
+    "storage_bucket": "barbershoop-faaef.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:879098073200:android:7dcb742601af7b897a24b5",
+        "android_client_info": {
+          "package_name": "com.lobao.barbearia"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAg_kFExY8HP4ZBpTwdkBPmIeiPn8EW9Fk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
