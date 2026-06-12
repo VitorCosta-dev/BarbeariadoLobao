@@ -13,9 +13,13 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Space;
 import android.widget.TextView;
+import android.widget.Toast;
 
+import com.google.firebase.auth.FirebaseAuth;
+import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.firestore.FieldValue;
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.firebase.firestore.QueryDocumentSnapshot;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -32,60 +36,138 @@ public class MainActivity extends Activity {
     private String selectedPrice = "R$ 35";
     private String selectedTime = "13:00";
     private FirebaseFirestore db;
+    private FirebaseAuth mAuth;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Inicializa o banco de dados Firebase Firestore
+        // Inicializa o Firebase
         db = FirebaseFirestore.getInstance();
+        mAuth = FirebaseAuth.getInstance();
 
-        showLogin();
+        // Verifica se o usuário já está logado
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+        if (currentUser != null) {
+            showHome();
+        } else {
+            showLogin();
+        }
     }
 
     private void showLogin() {
         LinearLayout content = base();
         content.setGravity(Gravity.CENTER_HORIZONTAL);
         addBrand(content, "Barbearia do Lobão", "Seu estilo, nossa arte");
-        addInput(content, "E-mail", "cliente@lobao.com", false);
-        addInput(content, "Senha", "123456", true);
-        content.addView(primaryButton("Entrar", v -> showHome()));
+        
+        EditText emailInput = addInput(content, "E-mail", "", false);
+        EditText senhaInput = addInput(content, "Senha", "", true);
+        
+        content.addView(primaryButton("Entrar", v -> {
+            String email = emailInput.getText().toString().trim();
+            String senha = senhaInput.getText().toString().trim();
+
+            if (email.isEmpty() || senha.isEmpty()) {
+                Toast.makeText(this, "Preencha todos os campos", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            mAuth.signInWithEmailAndPassword(email, senha)
+                    .addOnCompleteListener(this, task -> {
+                        if (task.isSuccessful()) {
+                            showHome();
+                        } else {
+                            Toast.makeText(this, "Erro ao entrar: " + task.getException().getMessage(), Toast.LENGTH_SHORT).show();
+                        }
+                    });
+        }));
+
         LinearLayout row = row();
         row.addView(outlineButton("Cadastre-se", v -> showSignup()), weightParams());
-        row.addView(outlineButton("Área do barbeiro", v -> showAdmin()), weightParams());
+        row.addView(outlineButton("Área do barbeiro", v -> showAdminLogin()), weightParams());
         content.addView(row);
+        setContentView(scroll(content));
+    }
+
+    private void showAdminLogin() {
+        LinearLayout content = base();
+        addTop(content, "Acesso Restrito", this::showLogin);
+        
+        EditText emailInput = addInput(content, "E-mail do Barbeiro", "", false);
+        EditText senhaInput = addInput(content, "Senha", "", true);
+
+        content.addView(primaryButton("Entrar como Barbeiro", v -> {
+            String email = emailInput.getText().toString().trim();
+            String senha = senhaInput.getText().toString().trim();
+
+            if (email.isEmpty() || senha.isEmpty()) {
+                Toast.makeText(this, "Preencha os campos", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            mAuth.signInWithEmailAndPassword(email, senha)
+                    .addOnCompleteListener(this, task -> {
+                        if (task.isSuccessful()) {
+                            db.collection("usuarios").document(mAuth.getUid()).get()
+                                    .addOnSuccessListener(doc -> {
+                                        String tipo = doc.getString("tipo");
+                                        if ("barbeiro".equals(tipo) || "admin".equals(tipo)) {
+                                            showAdmin();
+                                        } else {
+                                            mAuth.signOut();
+                                            Toast.makeText(this, "Acesso apenas para profissionais", Toast.LENGTH_SHORT).show();
+                                            showLogin();
+                                        }
+                                    });
+                        } else {
+                            Toast.makeText(this, "Falha: " + task.getException().getMessage(), Toast.LENGTH_SHORT).show();
+                        }
+                    });
+        }));
         setContentView(scroll(content));
     }
 
     private void showSignup() {
         LinearLayout content = base();
-        addTop(content, "Cadastro", this::showLogin);
+        addTop(content, "Criar Conta", this::showLogin);
 
         addPanel(content, panel -> {
-            EditText barbeariaInput = addInput(panel, "Barbearia", "Barbearia do Lobão", false);
             EditText nomeInput = addInput(panel, "Nome completo", "", false);
-            EditText telefoneInput = addInput(panel, "Telefone", "", false);
             EditText emailInput = addInput(panel, "E-mail", "", false);
             EditText senhaInput = addInput(panel, "Senha", "", true);
             EditText confirmarSenhaInput = addInput(panel, "Confirmar senha", "", true);
 
-            panel.addView(primaryButton("Criar conta", v -> {
-                Map<String, Object> usuario = new HashMap<>();
+            panel.addView(primaryButton("Cadastrar Agora", v -> {
+                String nome = nomeInput.getText().toString().trim();
+                String email = emailInput.getText().toString().trim();
+                String senha = senhaInput.getText().toString().trim();
+                String conf = confirmarSenhaInput.getText().toString().trim();
 
-                // Integração 100% alinhada com a coleção 'usuarios' do seu banco
-                usuario.put("nome", nomeInput.getText().toString());
-                usuario.put("email", emailInput.getText().toString());
-                usuario.put("tipo", "cliente");
-                usuario.put("criadoEm", FieldValue.serverTimestamp());
+                if (nome.isEmpty() || email.isEmpty() || senha.isEmpty()) {
+                    Toast.makeText(this, "Campos obrigatórios vazios", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                if (!senha.equals(conf)) {
+                    Toast.makeText(this, "As senhas não conferem", Toast.LENGTH_SHORT).show();
+                    return;
+                }
 
-                db.collection("usuarios")
-                        .add(usuario)
-                        .addOnSuccessListener(documentReference -> {
-                            System.out.println("Usuário salvo com ID: " + documentReference.getId());
-                            showHome();
-                        })
-                        .addOnFailureListener(e ->
-                                System.out.println("Erro ao salvar usuário: " + e.getMessage()));
+                mAuth.createUserWithEmailAndPassword(email, senha)
+                        .addOnCompleteListener(this, task -> {
+                            if (task.isSuccessful()) {
+                                String uid = mAuth.getCurrentUser().getUid();
+                                Map<String, Object> user = new HashMap<>();
+                                user.put("nome", nome);
+                                user.put("email", email);
+                                user.put("tipo", "cliente");
+                                user.put("criadoEm", FieldValue.serverTimestamp());
+
+                                db.collection("usuarios").document(uid).set(user)
+                                        .addOnSuccessListener(aVoid -> showHome());
+                            } else {
+                                Toast.makeText(this, "Erro: " + task.getException().getMessage(), Toast.LENGTH_SHORT).show();
+                            }
+                        });
             }));
         });
 
@@ -94,328 +176,271 @@ public class MainActivity extends Activity {
 
     private void showHome() {
         LinearLayout content = base();
-        addTop(content, "Barbearia do Lobão", this::showLogin);
-        addPanel(content, panel -> {
-            panel.setMinimumHeight(dp(170));
-            addSmall(panel, "Aberto hoje até 20:00", MUTED);
-            addTitle(panel, "Corte, barba e acabamento", 25);
-            addSmall(panel, "Rua Principal, 120  |  Pagamento no app  |  Agenda online", GOLD_LIGHT);
+        addTop(content, "Olá!", () -> {
+            mAuth.signOut();
+            showLogin();
         });
+        
         addPanel(content, panel -> {
-            addSectionTitle(panel, "Serviços");
-            addPrice(panel, "Corte masculino", "R$ 35");
-            addPrice(panel, "Barba desenhada", "R$ 25");
-            addPrice(panel, "Corte + barba", "R$ 55");
-            addPrice(panel, "Sobrancelha", "R$ 15");
+            panel.setMinimumHeight(dp(120));
+            addTitle(panel, "Barbearia do Lobão", 26);
+            addSmall(panel, "Seu visual em boas mãos", GOLD_LIGHT);
         });
-        content.addView(primaryButton("Agendar horário", v -> showSchedule()));
+
+        addPanel(content, panel -> {
+            addSectionTitle(panel, "Meus Compromissos");
+            db.collection("agendamentos")
+                    .whereEqualTo("usuarioId", mAuth.getUid())
+                    .get()
+                    .addOnSuccessListener(docs -> {
+                        if (docs.isEmpty()) {
+                            addSmall(panel, "Nenhum agendamento para hoje.", MUTED);
+                        } else {
+                            for (QueryDocumentSnapshot doc : docs) {
+                                addSummary(panel, doc.getString("servico"), doc.getString("horario"));
+                            }
+                        }
+                    });
+        });
+
+        content.addView(primaryButton("Novo Agendamento", v -> showSchedule()));
         setContentView(scroll(content));
     }
 
     private void showSchedule() {
         LinearLayout content = base();
-        addTop(content, "Agendamento", this::showHome);
+        addTop(content, "Agendar", this::showHome);
+        
         addPanel(content, panel -> {
-            addSectionTitle(panel, "Escolha o serviço");
-            addChoice(panel, "Corte masculino", "R$ 35");
-            addChoice(panel, "Barba desenhada", "R$ 25");
-            addChoice(panel, "Corte + barba", "R$ 55");
-            addChoice(panel, "Sobrancelha", "R$ 15");
+            addSectionTitle(panel, "Serviço");
+            String[][] servicos = {
+                {"Corte", "R$ 35"}, {"Barba", "R$ 25"}, {"Combo", "R$ 55"}
+            };
+            for (String[] s : servicos) {
+                panel.addView(outlineButton(s[0] + " - " + s[1], v -> {
+                    selectedService = s[0];
+                    selectedPrice = s[1];
+                    Toast.makeText(this, s[0] + " selecionado", Toast.LENGTH_SHORT).show();
+                }));
+            }
 
             addSectionTitle(panel, "Horário");
-            LinearLayout times = row();
-            times.addView(timeButton("09:00"), weightParams());
-            times.addView(timeButton("10:30"), weightParams());
-            times.addView(timeButton("13:00"), weightParams());
-            panel.addView(times);
+            String[] horas = {"09:00", "10:30", "14:00", "16:00"};
+            LinearLayout row = row();
+            for (String h : horas) {
+                row.addView(outlineButton(h, v -> {
+                    selectedTime = h;
+                    Toast.makeText(this, "Às " + h, Toast.LENGTH_SHORT).show();
+                }), weightParams());
+            }
+            panel.addView(row);
 
-            LinearLayout times2 = row();
-            times2.addView(timeButton("14:30"), weightParams());
-            times2.addView(timeButton("16:00"), weightParams());
-            times2.addView(timeButton("18:30"), weightParams());
-            panel.addView(times2);
-
-            panel.addView(primaryButton("Continuar", v -> showPayment()));
+            panel.addView(primaryButton("Próximo Passo", v -> showPayment()));
         });
         setContentView(scroll(content));
     }
 
     private void showPayment() {
         LinearLayout content = base();
-        addTop(content, "Pagamento", this::showSchedule);
+        addTop(content, "Resumo", this::showSchedule);
 
         addPanel(content, panel -> {
-            addSummary(panel, "Barbearia", "Barbearia do Lobão");
-            addSummary(panel, "Serviço", selectedService);
-            addSummary(panel, "Horário", selectedTime);
-            addSummary(panel, "Total", selectedPrice);
+            addSummary(panel, "O que:", selectedService);
+            addSummary(panel, "Quando:", selectedTime);
+            addSummary(panel, "Valor:", selectedPrice);
         });
 
-        addPanel(content, panel -> {
-            addSectionTitle(panel, "Forma de pagamento");
-            addSmall(panel, "Pix selecionado", GOLD_LIGHT);
-
-            panel.addView(primaryButton("Confirmar agendamento", v -> {
-                salvarAgendamento();
-                showConfirmed();
-            }));
-        });
-
+        content.addView(primaryButton("Confirmar e Salvar", v -> salvarAgendamento()));
         setContentView(scroll(content));
+    }
+
+    private void salvarAgendamento() {
+        Map<String, Object> ag = new HashMap<>();
+        ag.put("usuarioId", mAuth.getUid());
+        ag.put("servico", selectedService);
+        ag.put("horario", selectedTime);
+        ag.put("preco", selectedPrice);
+        ag.put("data", FieldValue.serverTimestamp());
+
+        db.collection("agendamentos").add(ag)
+                .addOnSuccessListener(ref -> {
+                    Toast.makeText(this, "Reservado com sucesso!", Toast.LENGTH_SHORT).show();
+                    showConfirmed();
+                });
     }
 
     private void showConfirmed() {
         LinearLayout content = base();
-        content.setGravity(Gravity.CENTER_HORIZONTAL);
-        addBrand(content, "Confirmado", "Barbearia do Lobão");
-        addPanel(content, panel -> {
-            addSummary(panel, "Status", "Agendado");
-            addSummary(panel, "Horário", selectedTime);
-            addSummary(panel, "Pagamento", "Recebido");
-        });
-        content.addView(primaryButton("Voltar ao início", v -> showHome()));
+        content.setGravity(Gravity.CENTER);
+        addTitle(content, "Tudo certo!", 32);
+        addSmall(content, "Te esperamos às " + selectedTime, GOLD);
+        content.addView(primaryButton("Voltar", v -> showHome()));
         setContentView(scroll(content));
     }
 
     private void showAdmin() {
         LinearLayout content = base();
         addTop(content, "Gestão", this::showLogin);
+        
         addPanel(content, panel -> {
-            addSectionTitle(panel, "Barbearia do Lobão");
-            addSmall(panel, "Agenda do dia, pausas, pagamentos e configuração da barbearia.", MUTED);
-            addSummary(panel, "Agendados hoje", "12 horários");
-            addSummary(panel, "Recebido no app", "R$ 420");
-            addSummary(panel, "Pausa", "15:00 às 15:30");
-            addSummary(panel, "Avaliação média", "4,9");
+            addSectionTitle(panel, "Agenda de Hoje");
+            db.collection("agendamentos").orderBy("horario").get()
+                    .addOnSuccessListener(docs -> {
+                        for (QueryDocumentSnapshot doc : docs) {
+                            addSummary(panel, doc.getString("horario"), doc.getString("servico"));
+                        }
+                    });
         });
-        addPanel(content, panel -> {
-            addSectionTitle(panel, "Próximos atendimentos");
-            addSummary(panel, "13:00", "Lucas");
-            addSummary(panel, "14:30", "Renato");
-            addSummary(panel, "16:00", "Marcos");
-        });
+
+        content.addView(primaryButton("Sair do Painel", v -> {
+            mAuth.signOut();
+            showLogin();
+        }));
         setContentView(scroll(content));
     }
 
-    private void salvarAgendamento() {
-        Map<String, Object> agendamento = new HashMap<>();
-
-        // Integração 100% alinhada com a coleção 'agendamentos' do seu banco
-        agendamento.put("servico", selectedService);
-        agendamento.put("preco", selectedPrice);
-        agendamento.put("horario", selectedTime);
-        agendamento.put("status", "confirmado");
-
-        db.collection("agendamentos")
-                .add(agendamento)
-                .addOnSuccessListener(documentReference ->
-                        System.out.println("Agendamento salvo com ID: " + documentReference.getId()))
-                .addOnFailureListener(e ->
-                        System.out.println("Erro ao salvar agendamento: " + e.getMessage()));
-    }
-
-    // --- MÉTODOS DE CONSTRUÇÃO DA INTERFACE ---
+    // --- MÉTODOS AUXILIARES DE UI (Traduzidos e Otimizados) ---
 
     private LinearLayout base() {
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(dp(22), dp(28), dp(22), dp(28));
-        layout.setBackgroundColor(BLACK);
-        return layout;
+        LinearLayout l = new LinearLayout(this);
+        l.setOrientation(LinearLayout.VERTICAL);
+        l.setPadding(dp(20), dp(20), dp(20), dp(20));
+        l.setBackgroundColor(BLACK);
+        return l;
     }
 
     private ScrollView scroll(View content) {
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setBackgroundColor(BLACK);
-        scroll.addView(content);
-        return scroll;
+        ScrollView s = new ScrollView(this);
+        s.setFillViewport(true);
+        s.addView(content);
+        return s;
     }
 
-    private void addBrand(LinearLayout parent, String title, String subtitle) {
-        TextView mark = new TextView(this);
-        mark.setText("✂");
-        mark.setTextColor(GOLD);
-        mark.setTextSize(54);
-        mark.setGravity(Gravity.CENTER);
-        parent.addView(mark, fullParams());
-        addTitle(parent, title, 32);
-        TextView sub = text(subtitle.toUpperCase(), 12, MUTED, Typeface.BOLD);
+    private void addBrand(LinearLayout p, String t, String s) {
+        TextView icon = text("✂", 50, GOLD, Typeface.BOLD);
+        icon.setGravity(Gravity.CENTER);
+        p.addView(icon);
+        addTitle(p, t, 30);
+        TextView sub = text(s.toUpperCase(), 12, MUTED, Typeface.NORMAL);
         sub.setGravity(Gravity.CENTER);
-        sub.setLetterSpacing(.18f);
-        parent.addView(sub, fullParams());
-        parent.addView(space(28));
+        p.addView(sub);
+        p.addView(space(30));
     }
 
-    private void addTop(LinearLayout parent, String title, Runnable back) {
-        LinearLayout top = row();
-        Button backButton = outlineButton("‹", v -> back.run());
-        top.addView(backButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
-        TextView label = text(title, 22, GOLD, Typeface.BOLD);
-        label.setGravity(Gravity.CENTER_VERTICAL);
-        top.addView(label, weightParams());
-        parent.addView(top, fullParams());
-        parent.addView(space(18));
+    private void addTop(LinearLayout p, String t, Runnable back) {
+        LinearLayout r = row();
+        Button b = outlineButton("‹", v -> back.run());
+        r.addView(b, new LinearLayout.LayoutParams(dp(45), dp(45)));
+        TextView l = text(t, 20, GOLD, Typeface.BOLD);
+        l.setPadding(dp(15), 0, 0, 0);
+        r.addView(l);
+        p.addView(r);
+        p.addView(space(20));
     }
 
-    private void addPanel(LinearLayout parent, PanelBuilder builder) {
-        LinearLayout panel = new LinearLayout(this);
-        panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setPadding(dp(14), dp(14), dp(14), dp(14));
-        panel.setBackgroundResource(R.drawable.panel);
-        builder.build(panel);
-        LinearLayout.LayoutParams params = fullParams();
-        params.setMargins(0, 0, 0, dp(14));
-        parent.addView(panel, params);
+    private void addPanel(LinearLayout p, PanelBuilder b) {
+        LinearLayout pan = new LinearLayout(this);
+        pan.setOrientation(LinearLayout.VERTICAL);
+        pan.setPadding(dp(15), dp(15), dp(15), dp(15));
+        pan.setBackgroundResource(R.drawable.panel);
+        b.build(pan);
+        LinearLayout.LayoutParams lp = fullParams();
+        lp.setMargins(0, 0, 0, dp(15));
+        p.addView(pan, lp);
     }
 
-    private EditText addInput(LinearLayout parent, String label, String value, boolean password) {
-        TextView tv = text(label.toUpperCase(), 12, MUTED, Typeface.BOLD);
-        parent.addView(tv, fullParams());
-
-        EditText input = new EditText(this);
-        input.setText(value);
-        input.setTextColor(TEXT);
-        input.setHintTextColor(MUTED);
-        input.setTextSize(16);
-        input.setSingleLine(true);
-        input.setPadding(dp(12), 0, dp(12), 0);
-        input.setBackgroundResource(R.drawable.input);
-
-        if (password) {
-            input.setInputType(
-                    InputType.TYPE_CLASS_TEXT |
-                            InputType.TYPE_TEXT_VARIATION_PASSWORD
-            );
-        }
-
-        LinearLayout.LayoutParams params = fullParams();
-        params.setMargins(0, dp(7), 0, dp(16));
-        parent.addView(input, params);
-
-        return input;
+    private EditText addInput(LinearLayout p, String l, String v, boolean pass) {
+        p.addView(text(l, 12, MUTED, Typeface.BOLD));
+        EditText i = new EditText(this);
+        i.setText(v);
+        i.setTextColor(TEXT);
+        i.setBackgroundResource(R.drawable.input);
+        i.setPadding(dp(10), dp(10), dp(10), dp(10));
+        if (pass) i.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        LinearLayout.LayoutParams lp = fullParams();
+        lp.setMargins(0, dp(5), 0, dp(15));
+        p.addView(i, lp);
+        return i;
     }
 
-    private void addChoice(LinearLayout parent, String name, String price) {
-        Button btn = outlineButton(name + "  " + price, v -> {
-            selectedService = name;
-            selectedPrice = price;
-            showSchedule();
-        });
-        parent.addView(btn, fullParams());
+    private void addSummary(LinearLayout p, String l, String v) {
+        LinearLayout r = row();
+        r.addView(text(l, 15, MUTED, Typeface.NORMAL), weightParams());
+        TextView rv = text(v, 15, GOLD_LIGHT, Typeface.BOLD);
+        rv.setGravity(Gravity.END);
+        r.addView(rv, weightParams());
+        p.addView(r);
+        p.addView(space(8));
     }
 
-    private Button timeButton(String time) {
-        return outlineButton(time, v -> {
-            selectedTime = time;
-            showSchedule();
-        });
-    }
-
-    private void addPrice(LinearLayout parent, String label, String price) {
-        addSummary(parent, label, price);
-    }
-
-    private void addSummary(LinearLayout parent, String label, String value) {
-        LinearLayout row = row();
-        TextView left = text(label, 15, MUTED, Typeface.NORMAL);
-        TextView right = text(value, 15, GOLD_LIGHT, Typeface.BOLD);
-        right.setGravity(Gravity.RIGHT);
-        row.addView(left, weightParams());
-        row.addView(right, weightParams());
-        parent.addView(row, fullParams());
-        parent.addView(space(10));
-    }
-
-    private void addTitle(LinearLayout parent, String title, int size) {
-        TextView tv = text(title, size, GOLD, Typeface.BOLD);
+    private void addTitle(LinearLayout p, String t, int s) {
+        TextView tv = text(t, s, GOLD, Typeface.BOLD);
         tv.setGravity(Gravity.CENTER);
-        parent.addView(tv, fullParams());
+        p.addView(tv, fullParams());
     }
 
-    private void addSectionTitle(LinearLayout parent, String title) {
-        TextView tv = text(title, 19, TEXT, Typeface.BOLD);
-        LinearLayout.LayoutParams params = fullParams();
-        params.setMargins(0, 0, 0, dp(10));
-        parent.addView(tv, params);
+    private void addSectionTitle(LinearLayout p, String t) {
+        TextView tv = text(t, 18, TEXT, Typeface.BOLD);
+        p.addView(tv);
+        p.addView(space(10));
     }
 
-    private void addSmall(LinearLayout parent, String value, int color) {
-        TextView tv = text(value, 14, color, Typeface.NORMAL);
-        tv.setLineSpacing(2, 1.1f);
-        parent.addView(tv, fullParams());
+    private void addSmall(LinearLayout p, String v, int c) {
+        TextView tv = text(v, 14, c, Typeface.NORMAL);
+        tv.setGravity(Gravity.CENTER);
+        p.addView(tv, fullParams());
     }
 
-    private Button primaryButton(String label, View.OnClickListener listener) {
-        Button button = new Button(this);
-        button.setText(label);
-        button.setTextColor(Color.rgb(18, 16, 11));
-        button.setTextSize(14);
-        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        button.setAllCaps(true);
-        button.setBackgroundResource(R.drawable.button_gold);
-        button.setOnClickListener(listener);
-        LinearLayout.LayoutParams params = fullParams();
-        params.setMargins(0, dp(8), 0, dp(8));
-        button.setLayoutParams(params);
-        return button;
+    private Button primaryButton(String l, View.OnClickListener cl) {
+        Button b = new Button(this);
+        b.setText(l);
+        b.setBackgroundResource(R.drawable.button_gold);
+        b.setOnClickListener(cl);
+        return b;
     }
 
-    private Button outlineButton(String label, View.OnClickListener listener) {
-        Button button = new Button(this);
-        button.setText(label);
-        button.setTextColor(GOLD_LIGHT);
-        button.setTextSize(13);
-        button.setAllCaps(false);
-        button.setBackgroundResource(R.drawable.button_outline);
-        button.setOnClickListener(listener);
-        LinearLayout.LayoutParams params = fullParams();
-        params.setMargins(0, dp(6), 0, dp(6));
-        button.setLayoutParams(params);
-        return button;
+    private Button outlineButton(String l, View.OnClickListener cl) {
+        Button b = new Button(this);
+        b.setText(l);
+        b.setTextColor(GOLD_LIGHT);
+        b.setBackgroundResource(R.drawable.button_outline);
+        b.setOnClickListener(cl);
+        return b;
     }
 
-    private TextView text(String value, int size, int color, int style) {
+    private TextView text(String v, int s, int c, int st) {
         TextView tv = new TextView(this);
-        tv.setText(value);
-        tv.setTextSize(size);
-        tv.setTextColor(color);
-        tv.setTypeface(Typeface.DEFAULT, style);
+        tv.setText(v);
+        tv.setTextSize(s);
+        tv.setTextColor(c);
+        tv.setTypeface(Typeface.DEFAULT, st);
         return tv;
     }
 
     private LinearLayout row() {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, 0, 0, 0);
-        return row;
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        return r;
     }
 
-    private Space space(int height) {
-        Space space = new Space(this);
-        space.setLayoutParams(new LinearLayout.LayoutParams(1, dp(height)));
-        return space;
+    private Space space(int h) {
+        Space s = new Space(this);
+        s.setLayoutParams(new LinearLayout.LayoutParams(1, dp(h)));
+        return s;
     }
 
     private LinearLayout.LayoutParams fullParams() {
-        return new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
+        return new LinearLayout.LayoutParams(-1, -2);
     }
 
     private LinearLayout.LayoutParams weightParams() {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1);
-        params.setMargins(dp(4), 0, dp(4), 0);
-        return params;
+        return new LinearLayout.LayoutParams(0, -2, 1);
     }
 
-    private int dp(int value) {
-        return (int) (value * getResources().getDisplayMetrics().density + .5f);
+    private int dp(int v) {
+        return (int) (v * getResources().getDisplayMetrics().density + .5f);
     }
 
-    private interface PanelBuilder {
-        void build(LinearLayout panel);
-    }
+    private interface PanelBuilder { void build(LinearLayout p); }
 }
